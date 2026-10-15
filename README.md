@@ -1,6 +1,6 @@
-# Knowledge Base API
+﻿# Knowledge Base API
 
-[![CI](https://github.com/<your-github-username>/knowledge-base-api/actions/workflows/ci.yml/badge.svg)](https://github.com/<your-github-username>/knowledge-base-api/actions/workflows/ci.yml)
+[![CI](https://github.com/Revanth-Tatineni/knowledge-base-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Revanth-Tatineni/knowledge-base-api/actions/workflows/ci.yml)
 
 An async REST backend for a personal knowledge base: users write notes, tag them, and search
 them with Postgres full-text search. After each write, a background worker computes word
@@ -10,8 +10,8 @@ The goal is the parts of a backend that usually get skipped in demo projects: re
 rotation with reuse detection, Redis rate limiting, background jobs, migrations that CI checks,
 and tests that run against real Postgres and Redis.
 
-**Stack:** FastAPI · SQLAlchemy 2 (async) · PostgreSQL 16 · Alembic · Redis · ARQ · Pydantic v2 ·
-pytest · Docker · GitHub Actions
+**Stack:** FastAPI Â· SQLAlchemy 2 (async) Â· PostgreSQL 16 Â· Alembic Â· Redis Â· ARQ Â· Pydantic v2 Â·
+pytest Â· Docker Â· GitHub Actions
 
 ## Architecture
 
@@ -29,9 +29,9 @@ The code is layered, and each layer only calls the one below it:
 
 ```
 routes (HTTP: parse, validate, status codes)
-  └─ services (business rules, transactions)
-       └─ repositories (SQL queries)
-            └─ models (SQLAlchemy tables)
+  â””â”€ services (business rules, transactions)
+       â””â”€ repositories (SQL queries)
+            â””â”€ models (SQLAlchemy tables)
 ```
 
 ## Features
@@ -79,15 +79,15 @@ uv run arq app.worker.settings.WorkerSettings   # worker, in a second terminal
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` | – | Create an account |
-| POST | `/api/v1/auth/login` | – | Get access + refresh tokens (form: `username`, `password`) |
-| POST | `/api/v1/auth/refresh` | – | Swap a refresh token for a new pair |
-| POST | `/api/v1/auth/logout` | – | Revoke the refresh-token family |
+| POST | `/api/v1/auth/register` | â€“ | Create an account |
+| POST | `/api/v1/auth/login` | â€“ | Get access + refresh tokens (form: `username`, `password`) |
+| POST | `/api/v1/auth/refresh` | â€“ | Swap a refresh token for a new pair |
+| POST | `/api/v1/auth/logout` | â€“ | Revoke the refresh-token family |
 | GET / PATCH | `/api/v1/users/me` | Bearer | Read / update profile |
 | POST | `/api/v1/notes` | Bearer | Create a note |
 | GET | `/api/v1/notes?limit&offset&tag&q` | Bearer | List, filter by tag, full-text search |
 | GET / PATCH / DELETE | `/api/v1/notes/{id}` | Bearer | Read / partial update / delete |
-| GET | `/health/live`, `/health/ready` | – | Liveness / readiness |
+| GET | `/health/live`, `/health/ready` | â€“ | Liveness / readiness |
 
 Errors always use this shape:
 
