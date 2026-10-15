@@ -1,4 +1,4 @@
-﻿# Knowledge Base API
+# Knowledge Base API
 
 [![CI](https://github.com/Revanth-Tatineni/knowledge-base-api/actions/workflows/ci.yml/badge.svg)](https://github.com/Revanth-Tatineni/knowledge-base-api/actions/workflows/ci.yml)
 
@@ -7,11 +7,11 @@ them with Postgres full-text search. After each write, a background worker compu
 count, reading time and keywords.
 
 The goal is the parts of a backend that usually get skipped in demo projects: refresh-token
-rotation with reuse detection, Redis rate limiting, background jobs, migrations that CI checks,
-and tests that run against real Postgres and Redis.
+rotation with reuse detection, Redis rate limiting, background jobs, a standard response
+envelope, migrations that CI checks, and tests that run against real Postgres and Redis.
 
-**Stack:** FastAPI Â· SQLAlchemy 2 (async) Â· PostgreSQL 16 Â· Alembic Â· Redis Â· ARQ Â· Pydantic v2 Â·
-pytest Â· Docker Â· GitHub Actions
+**Stack:** FastAPI, SQLAlchemy 2 (async), PostgreSQL 16, Alembic, Redis, ARQ, Pydantic v2,
+pytest, Docker, GitHub Actions
 
 ## Architecture
 
@@ -20,18 +20,70 @@ flowchart LR
     C[Client] -->|HTTP + JWT| API[FastAPI app]
     API -->|rate-limit counters| R[(Redis)]
     API -->|enqueue job| R
-    API -->|SQLAlchemy async| PG[(PostgreSQL)]
+    API -->|SQLAlchemy async, pooled| PG[(PostgreSQL)]
     W[ARQ worker] -->|dequeue| R
     W -->|write stats| PG
 ```
 
-The code is layered, and each layer only calls the one below it:
+Each request flows down through the layers, and each layer only calls the one below it:
 
 ```
-routes (HTTP: parse, validate, status codes)
-  â””â”€ services (business rules, transactions)
-       â””â”€ repositories (SQL queries)
-            â””â”€ models (SQLAlchemy tables)
+controllers   HTTP: parse input, call a service, wrap the result in SuccessResponse
+  -> services       business rules, transaction boundaries
+    -> repositories   SQL queries
+      -> models/db      SQLAlchemy tables
+```
+
+## Project layout
+
+```
+app/
+  main.py               app factory + `python -m app.main <command>` entrypoint
+  cli.py                the shortcut commands (run, worker, migrate, test, build, up, ...)
+  dependencies.py       current user, service wiring for controllers
+  core/
+    env.py              every environment variable, validated into one `settings` object
+    logger.py           logging setup (text locally, JSON elsewhere) with request IDs
+    exception.py        domain errors + global handlers -> standard error response
+    db.py               engine + connection pool created at startup, session dependency
+    redis.py            the one Redis pool: get/set JSON, counters, job enqueue
+    rate_limiting.py    every API's rate limit in one table, Redis fixed-window limiter
+    cors.py             CORS setup
+    security.py         password hashing, JWT, refresh-token hashing
+  middleware/
+    request_context.py  request ID, access log, rate-limit headers
+  models/
+    response_model.py   GlobalResponse, SuccessResponse, ErrorResponse
+    auth_model.py       request/response models per feature
+    user_model.py
+    note_model.py
+    db/                 SQLAlchemy tables (user, note, tag, refresh_token)
+  controllers/          auth, user, note, health
+  services/             auth, note, text analysis
+  repositories/         SQL queries
+  workers/              ARQ tasks + worker settings
+migrations/             Alembic
+tests/
+```
+
+## Response format
+
+Every response, success or error, has the same shape:
+
+```json
+{"status": 201, "message": "Note created", "data": {"id": "...", "title": "..."}, "errors": []}
+```
+
+```json
+{"status": 404, "message": "Note not found", "data": null,
+ "errors": [{"code": "NOT_FOUND", "field": null, "message": null}]}
+```
+
+Validation errors list each bad field:
+
+```json
+{"status": 422, "message": "Validation failed", "data": null,
+ "errors": [{"code": "VALIDATION_ERROR", "field": "body.email", "message": "value is not a valid email address"}]}
 ```
 
 ## Features
@@ -45,18 +97,22 @@ routes (HTTP: parse, validate, status codes)
   deduplicated.
 - **Search:** a weighted `tsvector` generated column with a GIN index. Title matches rank above
   body matches, and queries support `"phrases"`, `OR` and `-exclusions`.
-- **Rate limiting:** fixed-window counters in Redis. Login and register are limited per IP;
-  everything else is limited per user. Every response carries `X-RateLimit-*` headers, 429s
+- **Rate limiting:** one table in `core/rate_limiting.py` sets the limit for every API (per IP
+  for auth, per user for everything else, with separate read and write budgets for notes). A
+  test fails if any endpoint is missing a limit. Responses carry `X-RateLimit-*` headers, 429s
   include `Retry-After`, and the limiter fails open if Redis is down.
 - **Background jobs:** ARQ worker. Note analysis runs after each text change, and a nightly
   cron job deletes expired refresh tokens.
-- **Operations:** JSON logs carrying a request ID, `X-Request-ID` echoed on every response, the
-  same error format everywhere, and `/health/live` plus `/health/ready` endpoints.
+- **Operations:** a pooled DB connection and one Redis pool shared across requests, logs that
+  carry a request ID, `X-Request-ID` echoed on every response, and `/health/live` plus
+  `/health/ready` endpoints.
 
 ## Run it
 
+Everything in Docker:
+
 ```bash
-docker compose up --build
+python -m app.main up        # or: docker compose up --build -d
 ```
 
 That starts Postgres, Redis, a one-off migration container, the API and the worker.
@@ -64,45 +120,52 @@ That starts Postgres, Redis, a one-off migration container, the API and the work
 - API docs (Swagger): http://localhost:8000/docs
 - Readiness: http://localhost:8000/health/ready
 
-### Local development (without containerizing the app)
+Local development (app on your machine, infrastructure in Docker):
 
 ```bash
-uv sync                                  # install deps into .venv
-docker compose up -d db redis            # just the infrastructure
+uv sync                       # install dependencies into .venv
 cp .env.example .env
-uv run alembic upgrade head
-uv run uvicorn app.main:app --reload     # API
-uv run arq app.worker.settings.WorkerSettings   # worker, in a second terminal
+uv run python -m app.main infra     # Postgres + Redis only
+uv run python -m app.main migrate
+uv run python -m app.main run       # API with auto-reload
+uv run python -m app.main worker    # in a second terminal
 ```
+
+All commands (`uv run python -m app.main --help`):
+
+| Command | Does |
+|---|---|
+| `run` | start the API with auto-reload (default) |
+| `worker` | start the background job worker |
+| `migrate` | apply database migrations |
+| `test` | run the test suite with coverage |
+| `lint` | ruff + format check + mypy |
+| `format` | auto-fix lint and formatting |
+| `infra` | start only Postgres + Redis in Docker |
+| `build` / `up` / `down` / `logs` | Docker image build, start, stop, follow logs |
 
 ## API
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` | â€“ | Create an account |
-| POST | `/api/v1/auth/login` | â€“ | Get access + refresh tokens (form: `username`, `password`) |
-| POST | `/api/v1/auth/refresh` | â€“ | Swap a refresh token for a new pair |
-| POST | `/api/v1/auth/logout` | â€“ | Revoke the refresh-token family |
+| POST | `/api/v1/auth/register` | - | Create an account |
+| POST | `/api/v1/auth/login` | - | Get access + refresh tokens (form: `username`, `password`) |
+| POST | `/api/v1/auth/refresh` | - | Swap a refresh token for a new pair |
+| POST | `/api/v1/auth/logout` | - | Revoke the refresh-token family |
 | GET / PATCH | `/api/v1/users/me` | Bearer | Read / update profile |
 | POST | `/api/v1/notes` | Bearer | Create a note |
 | GET | `/api/v1/notes?limit&offset&tag&q` | Bearer | List, filter by tag, full-text search |
 | GET / PATCH / DELETE | `/api/v1/notes/{id}` | Bearer | Read / partial update / delete |
-| GET | `/health/live`, `/health/ready` | â€“ | Liveness / readiness |
-
-Errors always use this shape:
-
-```json
-{"error": {"code": "not_found", "message": "Note not found", "request_id": "9fdf47de..."}}
-```
+| GET | `/health/live`, `/health/ready` | - | Liveness / readiness |
 
 ## Tests
 
 ```bash
-docker compose up -d db redis
-uv run pytest --cov
+uv run python -m app.main infra
+uv run python -m app.main test
 ```
 
-43 tests, about 98% coverage. They run against a real Postgres and Redis rather than SQLite or
+52 tests, about 98% coverage. They run against a real Postgres and Redis rather than SQLite or
 fakes, because the features under test (full-text search, `ON CONFLICT`, row locks, Redis
 expiry) behave differently or don't exist in the substitutes.
 
@@ -113,22 +176,6 @@ CI runs four groups of checks:
   have drifted apart), then a full downgrade/upgrade round trip
 - the test suite, with coverage
 - a Docker build
-
-## Project layout
-
-```
-app/
-  api/          routes, dependencies (auth, sessions, rate limits)
-  core/         config, security, errors, logging, rate limiter
-  db/           declarative base, engine/session factory
-  models/       SQLAlchemy models
-  schemas/      Pydantic request/response models
-  repositories/ database queries
-  services/     business logic
-  worker/       ARQ tasks and worker settings
-migrations/     Alembic
-tests/
-```
 
 ## What I'd add next
 

@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, TimestampMixin
+from app.models.db.base import Base, TimestampMixin
 
 
 class User(TimestampMixin, Base):

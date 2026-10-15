@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from pwdlib import PasswordHash
 
-from app.core.config import Settings
+from app.core.env import Settings
 
 _password_hash = PasswordHash.recommended()  # Argon2id
 
@@ -36,11 +36,11 @@ def create_access_token(user_id: uuid.UUID, settings: Settings) -> str:
         "sub": str(user_id),
         "type": "access",
         "iat": now,
-        "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
+        "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         "jti": uuid.uuid4().hex,
     }
     return jwt.encode(
-        payload, settings.jwt_secret_key.get_secret_value(), algorithm=settings.jwt_algorithm
+        payload, settings.JWT_SECRET_KEY.get_secret_value(), algorithm=settings.JWT_ALGORITHM
     )
 
 
@@ -48,8 +48,8 @@ def decode_access_token(token: str, settings: Settings) -> uuid.UUID:
     try:
         payload = jwt.decode(
             token,
-            settings.jwt_secret_key.get_secret_value(),
-            algorithms=[settings.jwt_algorithm],
+            settings.JWT_SECRET_KEY.get_secret_value(),
+            algorithms=[settings.JWT_ALGORITHM],
             options={"require": ["sub", "exp", "type"]},
         )
     except jwt.PyJWTError as exc:

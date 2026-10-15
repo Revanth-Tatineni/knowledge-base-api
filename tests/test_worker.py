@@ -6,10 +6,10 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy import func, select
 
-from app.models.refresh_token import RefreshToken
+from app.models.db.refresh_token import RefreshToken
 from app.services.text_analysis import analyze
-from app.worker.tasks import process_note, purge_expired_refresh_tokens
-from tests.conftest import RegisterAndLogin
+from app.workers.tasks import process_note, purge_expired_refresh_tokens
+from tests.conftest import RegisterAndLogin, data
 
 
 def test_analyze_counts_words_and_reading_time() -> None:
@@ -39,18 +39,18 @@ def test_analyze_keyword_ties_are_deterministic() -> None:
 async def test_process_note_fills_stats(
     client: AsyncClient, app: FastAPI, auth_headers: dict[str, str]
 ) -> None:
-    created = (
+    created = data(
         await client.post(
             "/api/v1/notes",
             json={"title": "Redis", "content": "Redis streams and redis pubsub"},
             headers=auth_headers,
         )
-    ).json()
-    ctx: dict[str, Any] = {"session_factory": app.state.session_factory}
+    )
+    ctx: dict[str, Any] = {"db": app.state.db}
     result = await process_note(ctx, created["id"])
     assert result is not None and result["word_count"] == 5
 
-    note = (await client.get(f"/api/v1/notes/{created['id']}", headers=auth_headers)).json()
+    note = data(await client.get(f"/api/v1/notes/{created['id']}", headers=auth_headers))
     assert note["word_count"] == 5
     assert note["reading_time_minutes"] == 1
     assert note["keywords"][0] == "redis"
@@ -58,7 +58,7 @@ async def test_process_note_fills_stats(
 
 
 async def test_process_note_for_deleted_note_is_a_noop(app: FastAPI) -> None:
-    ctx: dict[str, Any] = {"session_factory": app.state.session_factory}
+    ctx: dict[str, Any] = {"db": app.state.db}
     assert await process_note(ctx, str(uuid.uuid4())) is None
 
 
@@ -67,14 +67,14 @@ async def test_purge_expired_refresh_tokens(
 ) -> None:
     await register_and_login("a@example.com")
     await register_and_login("b@example.com")
-    async with app.state.session_factory() as session:
+    async with app.state.db.session_factory() as session:
         token = (await session.execute(select(RefreshToken).limit(1))).scalar_one()
         token.expires_at = datetime.now(UTC) - timedelta(days=1)
         await session.commit()
 
-    ctx: dict[str, Any] = {"session_factory": app.state.session_factory}
+    ctx: dict[str, Any] = {"db": app.state.db}
     assert await purge_expired_refresh_tokens(ctx) == 1
-    async with app.state.session_factory() as session:
+    async with app.state.db.session_factory() as session:
         assert await session.scalar(select(func.count()).select_from(RefreshToken)) == 1
 
 
@@ -86,6 +86,6 @@ async def test_note_still_saved_when_queue_is_down(
     async def down(*args: Any, **kwargs: Any) -> None:
         raise RedisConnectionError("queue down")
 
-    monkeypatch.setattr(app.state.redis, "enqueue_job", down)
+    monkeypatch.setattr(app.state.redis.pool, "enqueue_job", down)
     resp = await client.post("/api/v1/notes", json={"title": "Still saved"}, headers=auth_headers)
     assert resp.status_code == 201

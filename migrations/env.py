@@ -5,9 +5,9 @@ from alembic import context
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import app.models  # noqa: F401  (registers every model on Base.metadata)
-from app.core.config import get_settings
-from app.db.base import Base
+import app.models.db  # noqa: F401  (registers every table on Base.metadata)
+from app.core.env import get_settings
+from app.models.db.base import Base
 
 config = context.config
 if config.config_file_name is not None:
@@ -18,7 +18,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=get_settings().database_url,
+        url=get_settings().DATABASE_URL,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -34,7 +34,7 @@ def _run_sync(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    engine = create_async_engine(get_settings().database_url)
+    engine = create_async_engine(get_settings().DATABASE_URL)
     async with engine.connect() as connection:
         await connection.run_sync(_run_sync)
     await engine.dispose()

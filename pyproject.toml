@@ -69,7 +69,7 @@ addopts = "--strict-markers"
 source = ["app"]
 # SQLAlchemy's async layer runs DB code inside greenlets; without this, coverage misses it.
 concurrency = ["greenlet", "thread"]
-omit = ["app/worker/settings.py"]
+omit = ["app/workers/settings.py", "app/cli.py"]
 
 [tool.coverage.report]
 show_missing = true

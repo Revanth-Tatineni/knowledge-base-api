@@ -1,13 +1,14 @@
-import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from app.models.note import Note
+from app.core.db import Database
+from app.core.logger import get_logger
+from app.models.db.note import Note
 from app.repositories.token_repo import RefreshTokenRepository
 from app.services.text_analysis import analyze
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def process_note(ctx: dict[str, Any], note_id: str) -> dict[str, Any] | None:
@@ -16,7 +17,8 @@ async def process_note(ctx: dict[str, Any], note_id: str) -> dict[str, Any] | No
     Idempotent: it always reads the note's current text, so duplicate or out-of-order jobs
     for the same note converge on the right result.
     """
-    async with ctx["session_factory"]() as session:
+    db: Database = ctx["db"]
+    async with db.session_factory() as session:
         note = await session.get(Note, uuid.UUID(note_id))
         if note is None:
             logger.info("Note gone before processing", extra={"fields": {"note_id": note_id}})
@@ -31,7 +33,8 @@ async def process_note(ctx: dict[str, Any], note_id: str) -> dict[str, Any] | No
 
 
 async def purge_expired_refresh_tokens(ctx: dict[str, Any]) -> int:
-    async with ctx["session_factory"]() as session:
+    db: Database = ctx["db"]
+    async with db.session_factory() as session:
         deleted = await RefreshTokenRepository(session).delete_expired(datetime.now(UTC))
         await session.commit()
     logger.info("Purged expired refresh tokens", extra={"fields": {"deleted": deleted}})

@@ -1,12 +1,12 @@
-import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
-from app.core.errors import ConflictError, UnauthorizedError
+from app.core.env import Settings
+from app.core.exception import ConflictError, UnauthorizedError
+from app.core.logger import get_logger
 from app.core.security import (
     create_access_token,
     generate_refresh_token,
@@ -14,13 +14,13 @@ from app.core.security import (
     hash_refresh_token,
     verify_password,
 )
-from app.models.refresh_token import RefreshToken
-from app.models.user import User
+from app.models.auth_model import RegisterRequest, TokenResponse
+from app.models.db.refresh_token import RefreshToken
+from app.models.db.user import User
 from app.repositories.token_repo import RefreshTokenRepository
 from app.repositories.user_repo import UserRepository
-from app.schemas.auth import RegisterRequest, TokenPair
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AuthService:
@@ -47,7 +47,7 @@ class AuthService:
             raise ConflictError("Email is already registered") from exc
         return user
 
-    async def login(self, email: str, password: str) -> TokenPair:
+    async def login(self, email: str, password: str) -> TokenResponse:
         user = await self.users.get_by_email(email)
         valid = verify_password(password, user.hashed_password if user else None)
         if user is None or not valid or not user.is_active:
@@ -56,7 +56,7 @@ class AuthService:
         await self.session.commit()
         return pair
 
-    async def refresh(self, raw_token: str) -> TokenPair:
+    async def refresh(self, raw_token: str) -> TokenResponse:
         now = datetime.now(UTC)
         token = await self.tokens.get_by_hash_for_update(hash_refresh_token(raw_token))
         if token is None:
@@ -91,7 +91,7 @@ class AuthService:
             await self.tokens.revoke_family(token.family_id, datetime.now(UTC))
             await self.session.commit()
 
-    async def _issue(self, user_id: uuid.UUID, family_id: uuid.UUID) -> TokenPair:
+    async def _issue(self, user_id: uuid.UUID, family_id: uuid.UUID) -> TokenResponse:
         raw_refresh = generate_refresh_token()
         await self.tokens.add(
             RefreshToken(
@@ -99,11 +99,11 @@ class AuthService:
                 token_hash=hash_refresh_token(raw_refresh),
                 family_id=family_id,
                 expires_at=datetime.now(UTC)
-                + timedelta(days=self.settings.refresh_token_expire_days),
+                + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS),
             )
         )
-        return TokenPair(
+        return TokenResponse(
             access_token=create_access_token(user_id, self.settings),
             refresh_token=raw_refresh,
-            expires_in=self.settings.access_token_expire_minutes * 60,
+            expires_in=self.settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         )

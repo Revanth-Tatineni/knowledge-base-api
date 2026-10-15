@@ -20,7 +20,7 @@ def _normalize_tags(tags: list[str]) -> list[str]:
     return cleaned
 
 
-class NoteCreate(BaseModel):
+class NoteCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(default="", max_length=100_000)
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS)
@@ -31,7 +31,7 @@ class NoteCreate(BaseModel):
         return _normalize_tags(value)
 
 
-class NoteUpdate(BaseModel):
+class NoteUpdateRequest(BaseModel):
     """PATCH body: only fields that are sent get changed. `tags` replaces the full set."""
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
@@ -53,7 +53,7 @@ class NoteUpdate(BaseModel):
         return _normalize_tags(value)
 
 
-class NoteRead(BaseModel):
+class NoteResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -73,8 +73,8 @@ class NoteRead(BaseModel):
         return [tag if isinstance(tag, str) else tag.name for tag in value]
 
 
-class NotePage(BaseModel):
-    items: list[NoteRead]
+class NoteListResponse(BaseModel):
+    items: list[NoteResponse]
     total: int
     limit: int
     offset: int

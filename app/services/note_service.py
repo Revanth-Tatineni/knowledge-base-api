@@ -1,28 +1,28 @@
-import logging
 import uuid
 from datetime import UTC, datetime
 
-from arq.connections import ArqRedis
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
-from app.models.note import Note
+from app.core.exception import NotFoundError
+from app.core.logger import get_logger
+from app.core.redis import RedisClient
+from app.models.db.note import Note
+from app.models.note_model import NoteCreateRequest, NoteUpdateRequest
 from app.repositories.note_repo import NoteRepository
-from app.schemas.note import NoteCreate, NoteUpdate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 PROCESS_NOTE_TASK = "process_note"
 
 
 class NoteService:
-    def __init__(self, session: AsyncSession, queue: ArqRedis) -> None:
+    def __init__(self, session: AsyncSession, redis: RedisClient) -> None:
         self.session = session
-        self.queue = queue
+        self.redis = redis
         self.notes = NoteRepository(session)
 
-    async def create(self, owner_id: uuid.UUID, data: NoteCreate) -> Note:
+    async def create(self, owner_id: uuid.UUID, data: NoteCreateRequest) -> Note:
         note = Note(owner_id=owner_id, title=data.title, content=data.content)
         note.tags = await self.notes.get_or_create_tags(owner_id, data.tags)
         await self.notes.add(note)
@@ -51,7 +51,9 @@ class NoteService:
             owner_id, limit=limit, offset=offset, tag=tag, query=query
         )
 
-    async def update(self, owner_id: uuid.UUID, note_id: uuid.UUID, data: NoteUpdate) -> Note:
+    async def update(
+        self, owner_id: uuid.UUID, note_id: uuid.UUID, data: NoteUpdateRequest
+    ) -> Note:
         note = await self.get(owner_id, note_id)
         changes = data.model_dump(exclude_unset=True)
         text_changed = False
@@ -80,7 +82,7 @@ class NoteService:
         # The note is already committed; if the queue is down we log and move on rather than
         # failing a write the user already made. The stats just stay empty until the next edit.
         try:
-            await self.queue.enqueue_job(PROCESS_NOTE_TASK, str(note_id))
+            await self.redis.enqueue(PROCESS_NOTE_TASK, str(note_id))
         except (RedisError, OSError):
             logger.warning(
                 "Could not enqueue note processing",

@@ -8,14 +8,14 @@ import asyncpg
 import pytest
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import text
 
-import app.models  # registers every model on Base.metadata
-from app.core.config import Settings
-from app.db.base import Base
-from app.db.session import create_engine
+import app.models.db  # registers every table on Base.metadata
+from app.core.db import Database
+from app.core.env import Settings
 from app.main import create_app
+from app.models.db.base import Base
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL", "postgresql+asyncpg://kb:kb@localhost:5432/kb_test"
@@ -23,6 +23,17 @@ TEST_DATABASE_URL = os.getenv(
 TEST_REDIS_URL = os.getenv("TEST_REDIS_URL", "redis://localhost:6379/15")
 
 PASSWORD = "correct-horse-battery"
+
+
+def data(resp: Response) -> Any:
+    """The `data` field of a GlobalResponse."""
+    return resp.json()["data"]
+
+
+def error_code(resp: Response) -> str:
+    """The first error code of a GlobalResponse."""
+    code: str = resp.json()["errors"][0]["code"]
+    return code
 
 
 async def _create_database_and_schema() -> None:
@@ -42,11 +53,11 @@ async def _create_database_and_schema() -> None:
     finally:
         await admin.close()
 
-    engine = create_engine(TEST_DATABASE_URL)
-    async with engine.begin() as conn:
+    db = Database(TEST_DATABASE_URL)
+    async with db.engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    await engine.dispose()
+    await db.close()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -58,10 +69,10 @@ def _schema() -> None:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        environment="test",
-        database_url=TEST_DATABASE_URL,
-        redis_url=TEST_REDIS_URL,
-        log_level="WARNING",
+        ENVIRONMENT="test",
+        DATABASE_URL=TEST_DATABASE_URL,
+        REDIS_URL=TEST_REDIS_URL,
+        LOG_LEVEL="WARNING",
     )
 
 
@@ -70,9 +81,9 @@ async def app(settings: Settings) -> AsyncIterator[FastAPI]:
     application = create_app(settings)
     async with LifespanManager(application):
         tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
-        async with application.state.engine.begin() as conn:
+        async with application.state.db.engine.begin() as conn:
             await conn.execute(text(f"TRUNCATE {tables} CASCADE"))
-        await application.state.redis.flushdb()
+        await application.state.redis.pool.flushdb()
         yield application
 
 
@@ -96,7 +107,7 @@ def register_and_login(client: AsyncClient) -> RegisterAndLogin:
             "/api/v1/auth/login", data={"username": email, "password": password}
         )
         assert resp.status_code == 200, resp.text
-        tokens: dict[str, Any] = resp.json()
+        tokens: dict[str, Any] = data(resp)
         tokens["headers"] = {"Authorization": f"Bearer {tokens['access_token']}"}
         return tokens
 

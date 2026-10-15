@@ -4,7 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class UserRead(BaseModel):
+class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -13,5 +13,5 @@ class UserRead(BaseModel):
     created_at: datetime
 
 
-class UserUpdate(BaseModel):
+class UserUpdateRequest(BaseModel):
     full_name: str | None = Field(default=None, max_length=120)

@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.note import Note, Tag
+from app.models.db.note import Note, Tag
 
 
 class NoteRepository:

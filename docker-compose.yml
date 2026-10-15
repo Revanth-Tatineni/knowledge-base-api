@@ -45,7 +45,7 @@ services:
 
   worker:
     build: .
-    command: ["arq", "app.worker.settings.WorkerSettings"]
+    command: ["arq", "app.workers.settings.WorkerSettings"]
     environment: *app-env
     healthcheck:
       disable: true  # the image's HTTP healthcheck is for the API; the worker serves no HTTP
