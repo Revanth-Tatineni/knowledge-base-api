@@ -1,0 +1,57 @@
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://kb:kb@db:5432/kb
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-only-secret-change-me-in-production-0000}
+  ENVIRONMENT: local
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: kb
+      POSTGRES_DB: kb
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb -d kb"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: *app-env
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    build: .
+    environment: *app-env
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: .
+    command: ["arq", "app.worker.settings.WorkerSettings"]
+    environment: *app-env
+    healthcheck:
+      disable: true  # the image's HTTP healthcheck is for the API; the worker serves no HTTP
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+volumes:
+  pgdata:

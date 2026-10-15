@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy app
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kb
+          POSTGRES_PASSWORD: kb
+          POSTGRES_DB: kb
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U kb" --health-interval 2s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://kb:kb@localhost:5432/kb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      # Migrations are the real schema source; prove they apply, roll back, and match the models.
+      - run: uv run alembic upgrade head
+      - run: uv run alembic check
+      - run: uv run alembic downgrade base && uv run alembic upgrade head
+      - run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t knowledge-base-api .
